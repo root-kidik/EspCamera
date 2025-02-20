@@ -1,0 +1,7 @@
+# Build
+build*
+
+# Esp-Idf
+managed_components
+dependencies.lock
+sdkconfig
