@@ -18,7 +18,7 @@
 			]
 		}
 	},
-	"runArgs": ["--privileged"],
+	"runArgs": ["--privileged", "--network=host"],
 	"mounts": [
         "source=/dev,target=/dev,type=bind,consistency=cached"
     ]

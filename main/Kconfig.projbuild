@@ -12,6 +12,19 @@ menu "Example Configuration"
         help
             WiFi password (WPA or WPA2) for the example to use.
 
+    config EXAMPLE_IPV4_ADDR
+        string "IPV4 Address"
+        default "192.168.1.104"
+        help
+            Video receiving ip.
+
+    config EXAMPLE_PORT
+        int "Port"
+        range 0 65535
+        default 8010
+        help
+            Video receiving port.
+
     choice ESP_WIFI_SAE_MODE
         prompt "WPA3 SAE mode selection"
         default ESP_WPA3_SAE_PWE_BOTH
