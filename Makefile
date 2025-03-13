@@ -4,4 +4,4 @@ set-target:
 
 .PHONY: clear
 clear:
-	rm -rf build dependencies.lock sdkconfig* managed_components
+	rm -rf build dependencies.lock sdkconfig sdkconfig.old managed_components
