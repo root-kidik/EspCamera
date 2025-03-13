@@ -173,7 +173,6 @@ static const char *payload = "hi";
 
 void tcp_client(void)
 {
-    char rx_buffer[128];
     char host_ip[] = EXAMPLE_HOST_IP_ADDR;
     int addr_family = 0;
     int ip_protocol = 0;
