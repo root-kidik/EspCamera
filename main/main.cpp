@@ -138,9 +138,9 @@ void wifi_init_sta(void)
              * to WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK and set the password with length and format matching to
              * WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK standards.
              */
-                .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
+                .threshold = {.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD },
                 .sae_pwe_h2e        = ESP_WIFI_SAE_MODE,
-                .sae_h2e_identifier = EXAMPLE_H2E_IDENTIFIER,
+                .sae_h2e_identifier = EXAMPLE_H2E_IDENTIFIER
             },
     };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -202,22 +202,11 @@ void tcp_client(void)
 
         while (1) {
             int err = send(sock, payload, strlen(payload), 0);
-            if (err < 0) {
+            
+            if (err < 0) 
+            {
                 ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
                 break;
-            }
-
-            int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
-            // Error occurred during receiving
-            if (len < 0) {
-                ESP_LOGE(TAG, "recv failed: errno %d", errno);
-                break;
-            }
-            // Data received
-            else {
-                rx_buffer[len] = 0; // Null-terminate whatever we received and treat like a string
-                ESP_LOGI(TAG, "Received %d bytes from %s:", len, host_ip);
-                ESP_LOGI(TAG, "%s", rx_buffer);
             }
         }
 
@@ -229,7 +218,7 @@ void tcp_client(void)
     }
 }
 
-void app_main(void)
+extern "C" void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
 
