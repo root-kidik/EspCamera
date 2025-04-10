@@ -126,12 +126,12 @@ static camera_config_t camera_config = {
     .pin_pclk = CAM_PIN_PCLK,
 
     //XCLK 20MHz or 10MHz for OV2640 double FPS (Experimental)
-    .xclk_freq_hz = 20000000,
+    .xclk_freq_hz = 10000000,
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
 
     .pixel_format = PIXFORMAT_JPEG, //YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_UXGA,    //QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
+    .frame_size = FRAMESIZE_QVGA,    //QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
 
     .jpeg_quality = 12, //0-63, for OV series camera sensors, lower number means higher quality
     .fb_count = 1,       //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
@@ -292,8 +292,6 @@ void wifi_init_sta(void)
     }
 }
 
-static const char *payload = "hi";
-
 void tcp_client(void)
 {
     char host_ip[] = EXAMPLE_HOST_IP_ADDR;
@@ -326,11 +324,23 @@ void tcp_client(void)
             ESP_LOGI(TAG, "Taking picture...");
             camera_fb_t *pic = esp_camera_fb_get();
 
+            if (!pic)
+            {
+                ESP_LOGI(TAG, "Picture was not taken!");
+                continue;
+            }
+
             ESP_LOGI(TAG, "Picture taken! Its size was: %zu bytes", pic->len);
+
+            if (pic->buf[0] != 0xFF || pic->buf[1] != 0xD8)
+                ESP_LOGI(TAG, "Picture begin corrupted!");
+
+            if (pic->buf[pic->len - 2] != 0xFF || pic->buf[pic->len - 1] != 0xD9)
+                ESP_LOGI(TAG, "Picture end corrupted!");
 
             esp_camera_fb_return(pic);
 
-            int err = send(sock, pic->buf, pic->len, 0);
+            send(sock, pic->buf, pic->len, 0);
             
             // if (err < 0) 
             // {
