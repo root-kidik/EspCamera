@@ -15,6 +15,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "lwip/err.h"
 #include "lwip/sys.h"
 #include "nvs_flash.h"
@@ -134,7 +135,7 @@ static camera_config_t camera_config = {
     .frame_size = FRAMESIZE_VGA,    //QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
 
     .jpeg_quality = 12, //0-63, for OV series camera sensors, lower number means higher quality
-    .fb_count = 1,       //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
+    .fb_count = 3,       // Используем 3 буфера для асинхронной работы
     .fb_location = CAMERA_FB_IN_PSRAM,
     .grab_mode = CAMERA_GRAB_WHEN_EMPTY,
 };
@@ -292,94 +293,129 @@ void wifi_init_sta(void)
     }
 }
 
-void udp_client(void)
-{
-    char host_ip[] = EXAMPLE_HOST_IP_ADDR;
+// Глобальная очередь для передачи кадров
+static QueueHandle_t xFrameQueue = NULL;
+
+// Задача захвата кадров
+void capture_task(void *pvParameters) {
+    while(1) {
+        // Получаем новый кадр
+        camera_fb_t *pic = esp_camera_fb_get();
+        if (!pic) {
+            ESP_LOGW(TAG, "Camera capture failed");
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        // Отправляем указатель в очередь (ожидаем 100 мс)
+        if (xQueueSend(xFrameQueue, &pic, 100 / portTICK_PERIOD_MS) != pdPASS) {
+            // Если очередь полна - возвращаем буфер сразу
+            esp_camera_fb_return(pic);
+            ESP_LOGW(TAG, "Frame queue full - frame dropped");
+        }
+        
+        // Регулировка FPS (~30 кадров/сек)
+        vTaskDelay(33 / portTICK_PERIOD_MS);
+    }
+}
+
+// Задача отправки кадров
+void send_task(void *pvParameters) {
     struct sockaddr_in dest_addr;
     memset(&dest_addr, 0, sizeof(dest_addr));
     dest_addr.sin_family = AF_INET;
     dest_addr.sin_port = htons(EXAMPLE_PORT);
-    inet_pton(AF_INET, host_ip, &dest_addr.sin_addr.s_addr);
+    inet_pton(AF_INET, EXAMPLE_HOST_IP_ADDR, &dest_addr.sin_addr.s_addr);
 
-    while (1) {
-        int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-        if (sock < 0) {
-            ESP_LOGE(TAG, "Unable to create UDP socket: errno %d", errno);
-            vTaskDelay(2000 / portTICK_PERIOD_MS);
-            continue;
-        }
+    while(1) {
+        camera_fb_t *pic = NULL;
         
-        ESP_LOGI(TAG, "UDP socket created, target %s:%d", host_ip, EXAMPLE_PORT);
-
-        while (1) {
-            camera_fb_t *pic = esp_camera_fb_get();
-            if (!pic) {
-                ESP_LOGE(TAG, "Camera capture failed");
-                vTaskDelay(100 / portTICK_PERIOD_MS);
+        // Ждем новый кадр из очереди (бесконечно)
+        if (xQueueReceive(xFrameQueue, &pic, portMAX_DELAY) == pdPASS) {
+            int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+            if (sock < 0) {
+                ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
+                esp_camera_fb_return(pic);
                 continue;
             }
 
-            ESP_LOGI(TAG, "Picture taken! Size: %zu bytes", pic->len);
-            
-            const size_t CHUNK_SIZE = 1024;  // Размер чанка
-            size_t total_size = pic->len;
-            uint8_t *data = pic->buf;
-            
-            // Отправляем заголовок с размером изображения (4 байта)
-            uint32_t net_size = total_size;
+            // Устанавливаем таймаут на отправку (500 мс)
+            struct timeval timeout;
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 500000;
+            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+            // Отправляем размер кадра (сетевой порядок байт)
+            uint32_t net_size = pic->len;
             int err = sendto(sock, &net_size, sizeof(net_size), 0,
-                           (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+                   (struct sockaddr *)&dest_addr, sizeof(dest_addr));
             
             if (err < 0) {
                 ESP_LOGE(TAG, "Failed to send size header: errno %d", errno);
+                close(sock);
                 esp_camera_fb_return(pic);
-                break;
+                continue;
             }
-            
-            // Отправляем данные по чанкам
-            size_t bytes_sent = 0;
-            while (bytes_sent < total_size) {
-                size_t remaining = total_size - bytes_sent;
-                size_t chunk_len = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
+
+            // Отправка чанками по 1024 байта
+            const size_t CHUNK_SIZE = 1024;
+            size_t sent = 0;
+            while (sent < pic->len) {
+                size_t chunk_size = (pic->len - sent > CHUNK_SIZE) ? CHUNK_SIZE : pic->len - sent;
                 
-                err = sendto(sock, data + bytes_sent, chunk_len, 0,
+                err = sendto(sock, pic->buf + sent, chunk_size, 0,
                            (struct sockaddr *)&dest_addr, sizeof(dest_addr));
                 
                 if (err < 0) {
-                    ESP_LOGE(TAG, "UDP send error: errno %d", errno);
+                    ESP_LOGE(TAG, "Send error: errno %d", errno);
                     break;
                 }
-                
-                bytes_sent += chunk_len;
-                
-                // Небольшая задержка между чанками
-                // vTaskDelay(1 / portTICK_PERIOD_MS);  // ~1ms delay between chunks
+                sent += chunk_size;
             }
-            
-            ESP_LOGI(TAG, "Image sent in %d chunks", (bytes_sent + CHUNK_SIZE - 1) / CHUNK_SIZE);
-            
-            // Возвращаем буфер камеры
-            esp_camera_fb_return(pic);
-            
-            // Задержка между кадрами (регулирует FPS)
-            // vTaskDelay(33 / portTICK_PERIOD_MS);  // ~30 FPS
+
+            if (sent == pic->len) {
+                ESP_LOGI(TAG, "Frame sent: %d bytes", pic->len);
+            } else {
+                ESP_LOGW(TAG, "Partial frame sent: %d/%d bytes", sent, pic->len);
+            }
+
+            close(sock);
+            esp_camera_fb_return(pic); // Возвращаем буфер
         }
-        
-        close(sock);
-        ESP_LOGI(TAG, "UDP socket closed, restarting...");
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
 extern "C" void app_main(void)
 {
     ESP_ERROR_CHECK(init_camera());
+    ESP_LOGI(TAG, "Camera initialized");
 
-    ESP_ERROR_CHECK(nvs_flash_init());
+    // Инициализация NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
 
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+    // Подключаемся к WiFi
+    ESP_LOGI(TAG, "Connecting to WiFi...");
     wifi_init_sta();
 
-    // tcp_client();
-    udp_client();
+    // Создаем очередь на 5 кадров
+    xFrameQueue = xQueueCreate(5, sizeof(camera_fb_t*));
+    if (xFrameQueue == NULL) {
+        ESP_LOGE(TAG, "Failed to create frame queue");
+        return;
+    }
+
+    // Запускаем задачи
+    xTaskCreatePinnedToCore(capture_task, "capture", 4096, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(send_task, "udp_send", 4096, NULL, 6, NULL, 1);
+
+    ESP_LOGI(TAG, "Tasks started. Streaming to %s:%d", 
+             EXAMPLE_HOST_IP_ADDR, EXAMPLE_PORT);
+    
+    // Главная задача может завершиться
+    vTaskDelete(NULL);
 }
