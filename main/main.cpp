@@ -126,12 +126,12 @@ static camera_config_t camera_config = {
     .pin_pclk = CAM_PIN_PCLK,
 
     //XCLK 20MHz or 10MHz for OV2640 double FPS (Experimental)
-    .xclk_freq_hz = 10000000,
+    .xclk_freq_hz = 20000000,
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
 
     .pixel_format = PIXFORMAT_JPEG, //YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_QVGA,    //QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
+    .frame_size = FRAMESIZE_VGA,    //QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
 
     .jpeg_quality = 12, //0-63, for OV series camera sensors, lower number means higher quality
     .fb_count = 1,       //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
@@ -292,68 +292,82 @@ void wifi_init_sta(void)
     }
 }
 
-void tcp_client(void)
+void udp_client(void)
 {
     char host_ip[] = EXAMPLE_HOST_IP_ADDR;
-    int addr_family = 0;
-    int ip_protocol = 0;
+    struct sockaddr_in dest_addr;
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(EXAMPLE_PORT);
+    inet_pton(AF_INET, host_ip, &dest_addr.sin_addr.s_addr);
 
     while (1) {
-        struct sockaddr_in dest_addr;
-        inet_pton(AF_INET, host_ip, &dest_addr.sin_addr);
-        dest_addr.sin_family = AF_INET;
-        dest_addr.sin_port = htons(EXAMPLE_PORT);
-        addr_family = AF_INET;
-        ip_protocol = IPPROTO_IP;
-
-        int sock =  socket(addr_family, SOCK_STREAM, ip_protocol);
+        int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
         if (sock < 0) {
-            ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
-            break;
+            ESP_LOGE(TAG, "Unable to create UDP socket: errno %d", errno);
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+            continue;
         }
-        ESP_LOGI(TAG, "Socket created, connecting to %s:%d", host_ip, EXAMPLE_PORT);
-
-        int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-        if (err != 0) {
-            ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
-            break;
-        }
-        ESP_LOGI(TAG, "Successfully connected");
+        
+        ESP_LOGI(TAG, "UDP socket created, target %s:%d", host_ip, EXAMPLE_PORT);
 
         while (1) {
-            ESP_LOGI(TAG, "Taking picture...");
             camera_fb_t *pic = esp_camera_fb_get();
-
-            if (!pic)
-            {
-                ESP_LOGI(TAG, "Picture was not taken!");
+            if (!pic) {
+                ESP_LOGE(TAG, "Camera capture failed");
+                vTaskDelay(100 / portTICK_PERIOD_MS);
                 continue;
             }
 
-            ESP_LOGI(TAG, "Picture taken! Its size was: %zu bytes", pic->len);
-
-            if (pic->buf[0] != 0xFF || pic->buf[1] != 0xD8)
-                ESP_LOGI(TAG, "Picture begin corrupted!");
-
-            if (pic->buf[pic->len - 2] != 0xFF || pic->buf[pic->len - 1] != 0xD9)
-                ESP_LOGI(TAG, "Picture end corrupted!");
-
-            esp_camera_fb_return(pic);
-
-            send(sock, pic->buf, pic->len, 0);
+            ESP_LOGI(TAG, "Picture taken! Size: %zu bytes", pic->len);
             
-            // if (err < 0) 
-            // {
-            //     ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-            //     break;
-            // }
+            const size_t CHUNK_SIZE = 1024;  // Размер чанка
+            size_t total_size = pic->len;
+            uint8_t *data = pic->buf;
+            
+            // Отправляем заголовок с размером изображения (4 байта)
+            uint32_t net_size = total_size;
+            int err = sendto(sock, &net_size, sizeof(net_size), 0,
+                           (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+            
+            if (err < 0) {
+                ESP_LOGE(TAG, "Failed to send size header: errno %d", errno);
+                esp_camera_fb_return(pic);
+                break;
+            }
+            
+            // Отправляем данные по чанкам
+            size_t bytes_sent = 0;
+            while (bytes_sent < total_size) {
+                size_t remaining = total_size - bytes_sent;
+                size_t chunk_len = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
+                
+                err = sendto(sock, data + bytes_sent, chunk_len, 0,
+                           (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+                
+                if (err < 0) {
+                    ESP_LOGE(TAG, "UDP send error: errno %d", errno);
+                    break;
+                }
+                
+                bytes_sent += chunk_len;
+                
+                // Небольшая задержка между чанками
+                // vTaskDelay(1 / portTICK_PERIOD_MS);  // ~1ms delay between chunks
+            }
+            
+            ESP_LOGI(TAG, "Image sent in %d chunks", (bytes_sent + CHUNK_SIZE - 1) / CHUNK_SIZE);
+            
+            // Возвращаем буфер камеры
+            esp_camera_fb_return(pic);
+            
+            // Задержка между кадрами (регулирует FPS)
+            // vTaskDelay(33 / portTICK_PERIOD_MS);  // ~30 FPS
         }
-
-        if (sock != -1) {
-            ESP_LOGE(TAG, "Shutting down socket and restarting...");
-            shutdown(sock, 0);
-            close(sock);
-        }
+        
+        close(sock);
+        ESP_LOGI(TAG, "UDP socket closed, restarting...");
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -366,5 +380,6 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
 
-    tcp_client();
+    // tcp_client();
+    udp_client();
 }
