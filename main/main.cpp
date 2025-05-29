@@ -132,7 +132,7 @@ static camera_config_t camera_config = {
     .ledc_channel = LEDC_CHANNEL_0,
 
     .pixel_format = PIXFORMAT_JPEG, //YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_VGA,    //QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
+    .frame_size = FRAMESIZE_SVGA,    //QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
 
     .jpeg_quality = 12, //0-63, for OV series camera sensors, lower number means higher quality
     .fb_count = 3,       // Используем 3 буфера для асинхронной работы
@@ -327,35 +327,34 @@ void send_task(void *pvParameters) {
     dest_addr.sin_port = htons(EXAMPLE_PORT);
     inet_pton(AF_INET, EXAMPLE_HOST_IP_ADDR, &dest_addr.sin_addr.s_addr);
 
+    // Создаем сокет один раз при запуске
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // Переводим сокет в неблокирующий режим
+    int flags = fcntl(sock, F_GETFL);
+    if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+        ESP_LOGE(TAG, "Failed to set non-blocking socket: errno %d", errno);
+        close(sock);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGI(TAG, "UDP socket created in non-blocking mode");
+
     while(1) {
         camera_fb_t *pic = NULL;
         
-        // Ждем новый кадр из очереди (бесконечно)
+        // Ждем новый кадр из очереди
         if (xQueueReceive(xFrameQueue, &pic, portMAX_DELAY) == pdPASS) {
-            int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-            if (sock < 0) {
-                ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
-                esp_camera_fb_return(pic);
-                continue;
-            }
-
-            // Устанавливаем таймаут на отправку (500 мс)
-            struct timeval timeout;
-            timeout.tv_sec = 0;
-            timeout.tv_usec = 500000;
-            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-
             // Отправляем размер кадра (сетевой порядок байт)
             uint32_t net_size = pic->len;
-            int err = sendto(sock, &net_size, sizeof(net_size), 0,
+            sendto(sock, &net_size, sizeof(net_size), 0,
                    (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-            
-            if (err < 0) {
-                ESP_LOGE(TAG, "Failed to send size header: errno %d", errno);
-                close(sock);
-                esp_camera_fb_return(pic);
-                continue;
-            }
 
             // Отправка чанками по 1024 байта
             const size_t CHUNK_SIZE = 1024;
@@ -363,23 +362,17 @@ void send_task(void *pvParameters) {
             while (sent < pic->len) {
                 size_t chunk_size = (pic->len - sent > CHUNK_SIZE) ? CHUNK_SIZE : pic->len - sent;
                 
-                err = sendto(sock, pic->buf + sent, chunk_size, 0,
-                           (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+                // Неблокирующая отправка
+                int err = sendto(sock, pic->buf + sent, chunk_size, 0,
+                               (struct sockaddr *)&dest_addr, sizeof(dest_addr));
                 
-                if (err < 0) {
-                    ESP_LOGE(TAG, "Send error: errno %d", errno);
-                    break;
+                // Успешная отправка
+                if (err > 0) {
+                    sent += err;
                 }
-                sent += chunk_size;
             }
 
-            if (sent == pic->len) {
-                ESP_LOGI(TAG, "Frame sent: %d bytes", pic->len);
-            } else {
-                ESP_LOGW(TAG, "Partial frame sent: %d/%d bytes", sent, pic->len);
-            }
-
-            close(sock);
+            ESP_LOGD(TAG, "Frame processed: %d bytes", pic->len);
             esp_camera_fb_return(pic); // Возвращаем буфер
         }
     }
