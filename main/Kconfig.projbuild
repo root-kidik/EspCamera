@@ -2,19 +2,19 @@ menu "Example Configuration"
 
     config ESP_WIFI_SSID
         string "WiFi SSID"
-        default "516"
+        default "RT-GPON-B046"
         help
             SSID (network name) for the example to connect to.
 
     config ESP_WIFI_PASSWORD
         string "WiFi Password"
-        default "tusurrk516"
+        default "T4EJ8K5eH3"
         help
             WiFi password (WPA or WPA2) for the example to use.
 
     config EXAMPLE_IPV4_ADDR
         string "IPV4 Address"
-        default "192.168.1.104"
+        default "192.168.0.12"
         help
             Video receiving ip.
 

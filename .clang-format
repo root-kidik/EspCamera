@@ -9,19 +9,43 @@ ContinuationIndentWidth: 4
 IndentCaseLabels: true
 IndentCaseBlocks: false
 IndentExternBlock: Indent
-IndentPPDirectives: None
-IndentRequires: true
+IndentPPDirectives: BeforeHash
+IndentRequires: false
 IndentWidth: 4
-IndentWrappedFunctionNames: true
+IndentWrappedFunctionNames: false
 TabWidth: 4
 UseTab: Never
 
 # Alignment
 AlignAfterOpenBracket: Align
-AlignConsecutiveAssignments: Consecutive
-AlignConsecutiveBitFields: Consecutive
-AlignConsecutiveDeclarations: Consecutive
-AlignConsecutiveMacros: Consecutive
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+  AlignCompound: false
+  AlignFunctionPointers: false
+  PadOperators: true
+AlignConsecutiveBitFields:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+  AlignCompound: false
+  AlignFunctionPointers: false
+  PadOperators: true
+AlignConsecutiveDeclarations:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+  AlignCompound: false
+  AlignFunctionPointers: false
+  PadOperators: true
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+  AlignCompound: false
+  AlignFunctionPointers: false
+  PadOperators: true
 AlignEscapedNewlines: Left
 AlignOperands: Align
 AlignTrailingComments: true
@@ -39,21 +63,21 @@ AllowShortLoopsOnASingleLine: false
 AllowShortLambdasOnASingleLine: All
 
 # Break
-AlwaysBreakAfterReturnType: None
-AlwaysBreakBeforeMultilineStrings: true
-AlwaysBreakTemplateDeclarations: Yes
+BreakAfterReturnType: Automatic
+AlwaysBreakBeforeMultilineStrings: false
+BreakTemplateDeclarations: Yes
 BreakBeforeConceptDeclarations: true
 BreakBeforeTernaryOperators: true
-BreakConstructorInitializers: AfterColon
+BreakConstructorInitializers: BeforeComma
 BreakBeforeBinaryOperators: None
-BreakInheritanceList: AfterColon
-BreakStringLiterals: true
+BreakInheritanceList: BeforeComma
+BreakStringLiterals: false
 
 # Initializers & arguments
 BinPackArguments: false
 BinPackParameters: false
 ConstructorInitializerAllOnOneLineOrOnePerLine: true
-ConstructorInitializerIndentWidth: 0
+ConstructorInitializerIndentWidth: 4
 Cpp11BracedListStyle: true
 
 # Braces
@@ -88,16 +112,21 @@ DerivePointerAlignment: false
 
 # Empty lines
 EmptyLineBeforeAccessModifier: Always
-KeepEmptyLinesAtTheStartOfBlocks: true
+KeepEmptyLines:
+  AtEndOfFile: true
+  AtStartOfBlock: false
+  AtStartOfFile: false
 MaxEmptyLinesToKeep: 2
 
 # Sorting
 IncludeBlocks: Regroup
 IncludeCategories:
-  - Priority: 0
-    Regex: "^<(.+)>$"
-  - Priority: 1000
-    Regex: '^\"(.+)\"$'
+  - Priority: 101
+    Regex: ^<(.+hpp)>$
+  - Priority: 100
+    Regex: ^<(.+)>$
+  - Priority: 200
+    Regex: ^\"(.+)\"$
 SortIncludes: true
 SortUsingDeclarations: true
 
@@ -144,6 +173,18 @@ SpacesInSquareBrackets: false
 # Line endings
 UseCRLF: false
 
+# Separators
+IntegerLiteralSeparator:
+  Binary: 4
+  Decimal: 3
+  Hex: 2
+
 # Qualifiers (const, volatile, static, etc)
 QualifierAlignment: Custom
-QualifierOrder: ["static", "inline", "constexpr", "const", "volatile", "type"]
+QualifierOrder:
+  - static
+  - inline
+  - constexpr
+  - const
+  - volatile
+  - type
