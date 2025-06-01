@@ -16,16 +16,21 @@
 
 static const char* TAG = "EspCamera";
 
-class WiFiManager
+class Wifi
 {
 public:
-    WiFiManager(const char* ssid, const char* pass, int max_retry) : ssid_(ssid), pass_(pass), max_retry_(max_retry)
+    Wifi(const char* ssid, const char* pass, int maxRetry)
+        : m_ssid{ssid}
+        , m_pass{pass}
+        , m_max_retry{maxRetry}
+        , m_retry_num{0}
+        , m_wifi_event_group{nullptr}
+        , m_instance_any_id{nullptr}
+        , m_instance_got_ip{nullptr}
+        , m_wifi_connected_bit{BIT0}
+        , m_wifi_fail_bit{BIT1}
     {
-    }
-
-    esp_err_t connect()
-    {
-        s_wifi_event_group_ = xEventGroupCreate();
+        m_wifi_event_group = xEventGroupCreate();
         ESP_ERROR_CHECK(esp_netif_init());
         ESP_ERROR_CHECK(esp_event_loop_create_default());
         esp_netif_create_default_wifi_sta();
@@ -37,43 +42,42 @@ public:
             WIFI_EVENT,
             ESP_EVENT_ANY_ID,
             [](void* arg, esp_event_base_t base, int32_t id, void* data)
-            { static_cast<WiFiManager*>(arg)->event_handler(base, id, data); },
+            { static_cast<Wifi*>(arg)->EventHandler(base, id, data); },
             this,
-            &instance_any_id_);
+            &m_instance_any_id);
 
         esp_event_handler_instance_register(
             IP_EVENT,
             IP_EVENT_STA_GOT_IP,
             [](void* arg, esp_event_base_t base, int32_t id, void* data)
-            { static_cast<WiFiManager*>(arg)->event_handler(base, id, data); },
+            { static_cast<Wifi*>(arg)->EventHandler(base, id, data); },
             this,
-            &instance_got_ip_);
+            &m_instance_got_ip);
 
         wifi_config_t wifi_config = {};
-        strlcpy((char*)wifi_config.sta.ssid, ssid_, sizeof(wifi_config.sta.ssid));
-        strlcpy((char*)wifi_config.sta.password, pass_, sizeof(wifi_config.sta.password));
+        strlcpy((char*)wifi_config.sta.ssid, m_ssid, sizeof(wifi_config.sta.ssid));
+        strlcpy((char*)wifi_config.sta.password, m_pass, sizeof(wifi_config.sta.password));
         wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
         ESP_ERROR_CHECK(esp_wifi_start());
 
-        EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group_, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+        EventBits_t bits = xEventGroupWaitBits(m_wifi_event_group, m_wifi_connected_bit | m_wifi_fail_bit, pdFALSE, pdFALSE, portMAX_DELAY);
 
-        if (bits & WIFI_CONNECTED_BIT)
+        if (bits & m_wifi_connected_bit)
         {
-            ESP_LOGI(TAG, "Connected to AP: %s", ssid_);
-            return ESP_OK;
+            ESP_LOGI(TAG, "Connected to AP: %s", m_ssid);
         }
         else
         {
-            ESP_LOGE(TAG, "Failed to connect: %s", ssid_);
-            return ESP_FAIL;
+            ESP_LOGE(TAG, "Failed to connect: %s", m_ssid);
+            abort();
         }
     }
 
 private:
-    void event_handler(esp_event_base_t base, int32_t id, void* data)
+    void EventHandler(esp_event_base_t base, int32_t id, void* data)
     {
         if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START)
         {
@@ -81,35 +85,36 @@ private:
         }
         else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
         {
-            if (retry_num_ < max_retry_)
+            if (m_retry_num < m_max_retry)
             {
                 esp_wifi_connect();
-                retry_num_++;
-                ESP_LOGI(TAG, "Retry #%d", retry_num_);
+                m_retry_num++;
+                ESP_LOGI(TAG, "Retry #%d", m_retry_num);
             }
             else
             {
-                xEventGroupSetBits(s_wifi_event_group_, WIFI_FAIL_BIT);
+                xEventGroupSetBits(m_wifi_event_group, m_wifi_fail_bit);
             }
         }
         else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
         {
-            retry_num_ = 0;
-            xEventGroupSetBits(s_wifi_event_group_, WIFI_CONNECTED_BIT);
+            m_retry_num = 0;
+            xEventGroupSetBits(m_wifi_event_group, m_wifi_connected_bit);
         }
     }
 
-    const char* ssid_;
-    const char* pass_;
-    int         max_retry_;
+    const char* m_ssid;
+    const char* m_pass;
 
-    int                          retry_num_          = 0;
-    EventGroupHandle_t           s_wifi_event_group_ = nullptr;
-    esp_event_handler_instance_t instance_any_id_    = nullptr;
-    esp_event_handler_instance_t instance_got_ip_    = nullptr;
+    int m_max_retry;
+    int m_retry_num;
 
-    static constexpr auto WIFI_CONNECTED_BIT = BIT0;
-    static constexpr auto WIFI_FAIL_BIT      = BIT1;
+    EventGroupHandle_t           m_wifi_event_group;
+    esp_event_handler_instance_t m_instance_any_id;
+    esp_event_handler_instance_t m_instance_got_ip;
+
+    const uint32_t m_wifi_connected_bit;
+    const uint32_t m_wifi_fail_bit;
 };
 
 class Camera
@@ -309,11 +314,7 @@ extern "C" void app_main()
         return;
     }
 
-    WiFiManager wifi(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD, CONFIG_ESP_MAXIMUM_RETRY);
-    if (wifi.connect() != ESP_OK)
-    {
-        return;
-    }
+    Wifi wifi(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD, CONFIG_ESP_MAXIMUM_RETRY);
 
     QueueHandle_t frame_queue = xQueueCreate(5, sizeof(camera_fb_t*));
     if (!frame_queue)
