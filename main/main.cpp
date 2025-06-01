@@ -14,43 +14,6 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
-// Конфигурация пинов камеры
-#if CONFIG_CAMERA_MODEL_ESP32S3_EYE
-    #define CAM_PIN_PWDN  38
-    #define CAM_PIN_RESET -1
-    #define CAM_PIN_VSYNC 6
-    #define CAM_PIN_HREF  7
-    #define CAM_PIN_PCLK  13
-    #define CAM_PIN_XCLK  15
-    #define CAM_PIN_SIOD  4
-    #define CAM_PIN_SIOC  5
-    #define CAM_PIN_D0    11
-    #define CAM_PIN_D1    9
-    #define CAM_PIN_D2    8
-    #define CAM_PIN_D3    10
-    #define CAM_PIN_D4    12
-    #define CAM_PIN_D5    18
-    #define CAM_PIN_D6    17
-    #define CAM_PIN_D7    16
-#else // Default to ESP32-CAM
-    #define CAM_PIN_PWDN  32
-    #define CAM_PIN_RESET -1
-    #define CAM_PIN_XCLK  0
-    #define CAM_PIN_SIOD  26
-    #define CAM_PIN_SIOC  27
-    #define CAM_PIN_D7    35
-    #define CAM_PIN_D6    34
-    #define CAM_PIN_D5    39
-    #define CAM_PIN_D4    36
-    #define CAM_PIN_D3    21
-    #define CAM_PIN_D2    19
-    #define CAM_PIN_D1    18
-    #define CAM_PIN_D0    5
-    #define CAM_PIN_VSYNC 25
-    #define CAM_PIN_HREF  23
-    #define CAM_PIN_PCLK  22
-#endif
-
 static const char* TAG = "EspCamera";
 
 class WiFiManager
@@ -136,9 +99,10 @@ private:
         }
     }
 
-    const char*                  ssid_;
-    const char*                  pass_;
-    int                          max_retry_;
+    const char* ssid_;
+    const char* pass_;
+    int         max_retry_;
+
     int                          retry_num_          = 0;
     EventGroupHandle_t           s_wifi_event_group_ = nullptr;
     esp_event_handler_instance_t instance_any_id_    = nullptr;
@@ -153,27 +117,27 @@ class Camera
 public:
     Camera()
     {
-        config_.pin_pwdn     = CAM_PIN_PWDN;
-        config_.pin_reset    = CAM_PIN_RESET;
-        config_.pin_xclk     = CAM_PIN_XCLK;
-        config_.pin_sccb_sda = CAM_PIN_SIOD;
-        config_.pin_sccb_scl = CAM_PIN_SIOC;
-        config_.pin_d7       = CAM_PIN_D7;
-        config_.pin_d6       = CAM_PIN_D6;
-        config_.pin_d5       = CAM_PIN_D5;
-        config_.pin_d4       = CAM_PIN_D4;
-        config_.pin_d3       = CAM_PIN_D3;
-        config_.pin_d2       = CAM_PIN_D2;
-        config_.pin_d1       = CAM_PIN_D1;
-        config_.pin_d0       = CAM_PIN_D0;
-        config_.pin_vsync    = CAM_PIN_VSYNC;
-        config_.pin_href     = CAM_PIN_HREF;
-        config_.pin_pclk     = CAM_PIN_PCLK;
-        config_.xclk_freq_hz = 10'000'000;
+        config_.pin_pwdn     = 32;
+        config_.pin_reset    = -1;
+        config_.pin_xclk     = 0;
+        config_.pin_sccb_sda = 26;
+        config_.pin_sccb_scl = 27;
+        config_.pin_d7       = 35;
+        config_.pin_d6       = 34;
+        config_.pin_d5       = 39;
+        config_.pin_d4       = 36;
+        config_.pin_d3       = 21;
+        config_.pin_d2       = 19;
+        config_.pin_d1       = 18;
+        config_.pin_d0       = 5;
+        config_.pin_vsync    = 25;
+        config_.pin_href     = 23;
+        config_.pin_pclk     = 22;
+        config_.xclk_freq_hz = 20'000'000;
         config_.frame_size   = FRAMESIZE_SVGA;
         config_.pixel_format = PIXFORMAT_JPEG;
-        config_.jpeg_quality = 12;
-        config_.fb_count     = 3;
+        config_.jpeg_quality = 15;
+        config_.fb_count     = 10;
     }
 
     esp_err_t init()
@@ -219,7 +183,7 @@ private:
         while (true)
         {
             camera_fb_t* frame = nullptr;
-            if (xQueueReceive(frame_queue_, &frame, pdMS_TO_TICKS(100)) == pdPASS)
+            if (xQueueReceive(frame_queue_, &frame, pdMS_TO_TICKS(10)) == pdPASS)
             {
                 send_frame_udp(frame);
                 camera_.return_frame(frame);
@@ -268,10 +232,10 @@ private:
             const size_t offset    = i * max_payload;
             const size_t data_size = (i == total_packets - 1) ? (frame->len - offset) : max_payload;
 
-            *reinterpret_cast<uint32_t*>(packet)     = htonl(frame_counter);
-            *reinterpret_cast<uint16_t*>(packet + 4) = htons(i);
-            *reinterpret_cast<uint16_t*>(packet + 6) = htons(total_packets);
-            *reinterpret_cast<uint16_t*>(packet + 8) = htons(data_size);
+            *reinterpret_cast<uint32_t*>(packet)     = frame_counter;
+            *reinterpret_cast<uint16_t*>(packet + 4) = i;
+            *reinterpret_cast<uint16_t*>(packet + 6) = total_packets;
+            *reinterpret_cast<uint16_t*>(packet + 8) = data_size;
 
             memcpy(packet + header_size, frame->buf + offset, data_size);
 
@@ -311,17 +275,15 @@ private:
             camera_fb_t* frame = camera_.capture_frame();
             if (!frame)
             {
-                vTaskDelay(pdMS_TO_TICKS(10));
+                vTaskDelay(pdMS_TO_TICKS(delay_ms_));
                 continue;
             }
 
-            if (xQueueSend(frame_queue_, &frame, pdMS_TO_TICKS(100)) != pdPASS)
+            if (xQueueSend(frame_queue_, &frame, pdMS_TO_TICKS(10)) != pdPASS)
             {
                 camera_.return_frame(frame);
                 ESP_LOGW(TAG, "Frame dropped");
             }
-
-            vTaskDelay(pdMS_TO_TICKS(pdMS_TO_TICKS(delay_ms_)));
         }
     }
 
