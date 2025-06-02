@@ -170,7 +170,7 @@ public:
         config.frame_size   = FRAMESIZE_SVGA;
         config.pixel_format = PIXFORMAT_JPEG;
         config.jpeg_quality = 15;
-        config.fb_count     = 10;
+        config.fb_count     = 3;
 
         if (esp_camera_init(&config) != ESP_OK)
         {
@@ -198,7 +198,7 @@ private:
                 continue;
             }
 
-            if (!m_queue.Push(frame, pdMS_TO_TICKS(10)))
+            if (!m_queue.Push(frame, pdMS_TO_TICKS(1)))
             {
                 ReturnFrame(frame);
                 ESP_LOGW(TAG, "Frame dropped");
@@ -252,7 +252,7 @@ private:
         while (true)
         {
             camera_fb_t* frame = nullptr;
-            if (m_queue.Pop(&frame, pdMS_TO_TICKS(10)))
+            if (m_queue.Pop(&frame, pdMS_TO_TICKS(1)))
             {
                 SendFrameUdp(frame);
                 m_camera.ReturnFrame(frame);
@@ -271,11 +271,6 @@ private:
         m_frame_counter++;
 
         const size_t total_packets = (frame->len + kMaxPayloadSize - 1) / kMaxPayloadSize;
-        if (total_packets > 65'535)
-        {
-            ESP_LOGE(TAG, "Frame too large");
-            return;
-        }
 
         for (size_t i = 0; i < total_packets; i++)
         {
@@ -317,12 +312,12 @@ extern "C" void app_main()
     }
     ESP_ERROR_CHECK(ret);
 
-    FrameQueue frameQueue(5);
-    Camera     camera(frameQueue, 30);
+    FrameQueue frameQueue{3};
+    Camera     camera{frameQueue, 60};
 
-    Wifi wifi(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD, CONFIG_ESP_MAXIMUM_RETRY);
+    Wifi wifi{CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD, CONFIG_ESP_MAXIMUM_RETRY};
 
-    FrameStreamer streamer(CONFIG_EXAMPLE_IPV4_ADDR, CONFIG_EXAMPLE_PORT, frameQueue, camera);
+    FrameStreamer streamer{CONFIG_EXAMPLE_IPV4_ADDR, CONFIG_EXAMPLE_PORT, frameQueue, camera};
 
     while (true)
     {
